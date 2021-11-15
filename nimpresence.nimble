@@ -1,0 +1,5 @@
+version     = "0.0.1"
+author      = "DavideGalilei"
+description = "An async library to use discord rich presence API in Nim"
+license     = "MIT"
+srcDir      = "src"
