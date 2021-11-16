@@ -28,7 +28,7 @@ Go to https://discord.com/developers/applications, authenticate, create an appli
 
 ```nim
 discard await presence.update(
-    state = some "Hello world!",
+    state = some "Test #1",
     details = some r"`\(^~^)/`"
     `end` = some getTime().toUnix() + 1000,
     buttons = some @[
