@@ -1,24 +1,32 @@
 import net
 import json
+import distros
 import asyncnet
 import strformat
+import asyncfile
 import asyncdispatch
 
 from ./types import OPCode
 from ./exceptions import DiscordErrorCode
-from ./utils import getIpcPath, toLittleEndian, toBigEndian, toString, asBytes
+from ./utils import getIpcPath, toLittleEndian, toBigEndian, toString, asBytes, toUgly
 
 type
     BaseClient* = object
         ipc*: string
         clientId*: string
-        socket*: AsyncSocket
         handshakeAnswer*: Pack
+
+        case isWindows: bool
+        of true:
+            pipe*: AsyncFile
+        else:
+            socket*: AsyncSocket
 
     Pack* = object
         code*: OPCode
         length*: int
-        answer*: string
+        answer*: JsonNode
+
 #[
     Buffer = object
         data: string
@@ -46,52 +54,80 @@ proc send*(
     opcode: OPCode,
     payload: string,
 ): Future[Pack] {.async.} =
+    template checkParsed(parsed: JsonNode) =
+        if "code" in parsed:
+            raise DiscordErrorCode(
+                msg: fmt"""[CODE {parsed["code"].getInt()}] {parsed["message"].getStr()}""",
+                code: parsed["code"].getInt(),
+                message: parsed["message"].getStr()
+            )
+
+    var
+        parsed: JsonNode
+        code: int
+        length: int
+        answer: string
+
     var sendPayload: seq[byte] = @[]
 
     sendPayload &= asBytes(opcode.uint32) & asBytes(payload.len.uint32)
     sendPayload &= cast[seq[byte]](payload)
 
-    await client.socket.send(toString(sendPayload))
+    if client.isWindows:
+        await client.pipe.write(toString(sendPayload))
 
-    let firstBytes = await client.socket.recv(4)
-    doAssert firstBytes.len != 0, "Discord sent no bytes"
-    
-    let
+        let firstBytes = await client.pipe.read(4)
+        doAssert firstBytes.len != 0, "Discord sent no bytes"
+        
+        code = toBigEndian(firstBytes).int
+        length = toBigEndian(await client.pipe.read(4)).int
+        answer = await client.pipe.read(length.int)
+
+        parsed = parseJson(answer)
+        checkParsed(parsed)
+    else:
+        await client.socket.send(toString(sendPayload))
+
+        let firstBytes = await client.socket.recv(4)
+        doAssert firstBytes.len != 0, "Discord sent no bytes"
+        
         code = toBigEndian(firstBytes).int
         length = toBigEndian(await client.socket.recv(4)).int
         answer = await client.socket.recv(length.int)
 
-    let p = parseJson(answer)
-    if "code" in p:
-        raise DiscordErrorCode(
-            msg: fmt"""[CODE {p["code"].getInt()}] {p["message"].getStr()}""",
-            code: p["code"].getInt(),
-            message: p["message"].getStr()
-        )
+        parsed = parseJson(answer)
+        checkParsed(parsed)
 
-    return Pack(code: OPCode(code), length: length, answer: answer)
+    return Pack(code: OPCode(code), length: length, answer: parsed)
 
 proc initBaseClient*(
     clientId: string,
     ipcPath: string = "",
     pipe: string = "",
 ): Future[BaseClient] {.async.} =
+    let isWindows = detectOs(Windows)
+    result = BaseClient(isWindows: isWindows)
+
     result.ipc = if ipcPath != "": ipcPath
             else: getIpcPath(pipe = pipe)
 
-    result.socket = newAsyncSocket(AF_UNIX, SOCK_STREAM, IPPROTO_IP)
-    result.clientId = clientId
+    if result.isWindows:
+        result.pipe = openAsync(result.ipc, fmReadWriteExisting)
+    else:
+        result.socket = newAsyncSocket(AF_UNIX, SOCK_STREAM, IPPROTO_IP)
 
+    result.clientId = clientId
     result.handshakeAnswer = await result.handshake()
 
 proc handshake*(self: BaseClient): Future[Pack] {.async.} =
-    let initPayload = """{"v": 1, "client_id": """" & self.clientId & "\"}"
+    let initPayload = %* {"v": 1, "client_id": self.clientId}
 
-    await self.socket.connectUnix(self.ipc)
+    when not defined(windows):
+        await self.socket.connectUnix(self.ipc)
 
     let pack = await self.send(
         opcode = OPCode.HANDSHAKE,
-        payload = initPayload
+        payload = toUgly(initPayload)
     )
 
     return pack
@@ -100,6 +136,5 @@ proc handshake*(self: BaseClient): Future[Pack] {.async.} =
 when isMainModule:
     proc main {.async.} =
         let client = await initBaseClient("123456789")
-        echo 123
 
     waitFor main()

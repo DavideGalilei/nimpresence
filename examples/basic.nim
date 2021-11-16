@@ -1,5 +1,6 @@
-import asyncdispatch
+import options
 import strformat
+import asyncdispatch
 
 import ../src/nimpresence
 
@@ -9,9 +10,9 @@ proc main {.async.} =
     var i: int = 0
     while true:
         inc i
-        await presence.update(
-            state = fmt"Chillin' #{i}",
-            details = r"`\(^~^)/`")
+        discard await presence.update(
+            state = some fmt"Chillin' #{i}",
+            details = some r"`\(^~^)/`")
         await sleepAsync(15 * 1000) # Can update presence only each 15 seconds
 
 when isMainModule:
