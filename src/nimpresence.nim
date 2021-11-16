@@ -2,12 +2,11 @@ import os
 import json
 import times
 import options
-import strformat
 import asyncdispatch
 
 from ./nimpresence/types import OPCode
 from ./nimpresence/utils import toUgly
-from ./nimpresence/baseclient import BaseClient, initBaseClient, Pack, send
+from ./nimpresence/baseclient import BaseClient, initBaseClient, Pack, send, close, open, handshake
 
 type
     Presence* = object
@@ -50,7 +49,7 @@ proc update*(
                 "instance": true,
             }
         },
-        "nonce": %* "1637007106.87404775619506444939" # getTime().toUnixFloat()
+        "nonce": %* getTime().toUnixFloat()
     }
 
     if state.isSome():
@@ -111,11 +110,23 @@ proc update*(
     return answer.answer
 
 
+proc stop*(presence: Presence): Future[void] {.async.} =
+    await presence.client.close()
+
+
+proc reopen*(presence: Presence): Future[Presence] {.async.} =
+    result = Presence(
+        clientId: presence.clientId,
+        client: await presence.client.open(),
+    )
+    discard await result.client.handshake()
+
+
 when isMainModule:
-    import random
+    import random, strformat
     
     proc main {.async.} =
-        let presence = await initPresence(clientId = "909409932556767232")
+        var presence = await initPresence(clientId = "909409932556767232")
 
         var i: int = 0
         while true:

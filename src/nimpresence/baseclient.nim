@@ -47,6 +47,8 @@ template read(buffer: Buffer, size: Positive): string =
 proc handshake*(self: BaseClient): Future[Pack] {.async.}
 proc send*(client: BaseClient, opcode: OPCode, payload: string): Future[Pack] {.async.}
 proc initBaseClient*(clientId: string, ipcPath: string = "", pipe: string = ""): Future[BaseClient] {.async.}
+proc close*(self: BaseClient): Future[void] {.async.}
+proc open*(self: BaseClient): Future[BaseClient] {.async.}
 
 
 proc send*(
@@ -111,13 +113,18 @@ proc initBaseClient*(
     result.ipc = if ipcPath != "": ipcPath
             else: getIpcPath(pipe = pipe)
 
+    result.clientId = clientId
+    
+    result = await result.open()
+    result.handshakeAnswer = await result.handshake()
+
+proc open*(self: BaseClient): Future[BaseClient] {.async.} =
+    result = self
     if result.isWindows:
-        result.pipe = openAsync(result.ipc, fmReadWriteExisting)
+        result.pipe = openAsync(self.ipc, fmReadWriteExisting)
     else:
         result.socket = newAsyncSocket(AF_UNIX, SOCK_STREAM, IPPROTO_IP)
 
-    result.clientId = clientId
-    result.handshakeAnswer = await result.handshake()
 
 proc handshake*(self: BaseClient): Future[Pack] {.async.} =
     let initPayload = %* {"v": 1, "client_id": self.clientId}
@@ -133,8 +140,15 @@ proc handshake*(self: BaseClient): Future[Pack] {.async.} =
     return pack
 
 
+proc close*(self: BaseClient): Future[void] {.async.} =
+    when defined(windows):
+        self.pipe.close()
+    else:
+        self.socket.close()
+
+
 when isMainModule:
     proc main {.async.} =
-        let client = await initBaseClient("123456789")
+        var client = await initBaseClient("123456789")
 
     waitFor main()
